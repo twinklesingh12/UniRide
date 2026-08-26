@@ -1,90 +1,144 @@
-import { ApiError, type Ctx } from '../server/middleware/auth';
-import { matchRoute, type Method } from '../server/routes';
-import { verifyToken } from '../server/security';
-import { tokenStore } from './tokenStore';
+import axios, { AxiosError } from "axios";
+import { tokenStore } from "./tokenStore";
 
-/**
- * Axios-shaped client. `http.get/post/patch/delete` behave like an axios
- * instance with a baseURL of `/api`, a request interceptor that attaches the
- * bearer token, and a response interceptor that surfaces 401s to the auth layer.
- * Point `axios.create({ baseURL })` at the Express server and the callers in
- * services/api.ts stay identical.
- */
+export class ApiError extends Error {
+  status: number;
+  errors?: Array<{
+    field: string;
+    message: string;
+  }>;
 
-export interface RequestOptions {
-  params?: Record<string, unknown>;
-  data?: unknown;
+  constructor(
+    status: number,
+    message: string,
+    errors?: Array<{ field: string; message: string }>
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.errors = errors;
+  }
 }
 
 type UnauthorizedListener = () => void;
+
 const unauthorizedListeners = new Set<UnauthorizedListener>();
 
 export function onUnauthorized(listener: UnauthorizedListener): () => void {
   unauthorizedListeners.add(listener);
-  return () => unauthorizedListeners.delete(listener);
-}
 
-function latency(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 240 + Math.random() * 320));
-}
-
-function clone<T>(value: T): T {
-  return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
-}
-
-async function request<T>(
-method: Method,
-path: string,
-options: RequestOptions = {})
-: Promise<T> {
-  await latency();
-
-  // --- request interceptor -------------------------------------------------
-  const token = tokenStore.get();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const match = matchRoute(method, path);
-  if (!match) throw new ApiError(404, `Cannot ${method} ${path}`);
-
-  const ctx: Ctx = {
-    auth: verifyToken(headers.Authorization?.replace('Bearer ', '') ?? null),
-    body: options.data ?? {},
-    query: options.params ?? {},
-    params: match.params
+  return () => {
+    unauthorizedListeners.delete(listener);
   };
+}
 
-  try {
-    const result = match.route.handler(ctx);
-    return clone(result) as T;
-  } catch (error) {
-    const apiError =
-    error instanceof ApiError ?
-    error :
-    new ApiError(500, 'Something went wrong. Please try again.');
-    // --- response interceptor ---------------------------------------------
-    if (apiError.status === 401) {
-      tokenStore.clear();
-      unauthorizedListeners.forEach((listener) => listener());
-    }
-    throw apiError;
+const axiosClient = axios.create({
+  baseURL:
+    import.meta.env.VITE_API_URL || "http://127.0.0.1:5001",
+  withCredentials: true,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+axiosClient.interceptors.request.use((config) => {
+  const token = tokenStore.get();
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
+
+  return config;
+});
+
+axiosClient.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError<{
+    message?: string;
+    errors?: Array<{ field: string; message: string }>;
+  }>) => {
+    const status = error.response?.status || 500;
+    const message =
+      error.response?.data?.message ||
+      "Something went wrong. Please try again.";
+
+    if (status === 401 && tokenStore.get()) {
+      tokenStore.clear();
+
+      unauthorizedListeners.forEach((listener) => {
+        listener();
+      });
+    }
+
+    return Promise.reject(
+      new ApiError(
+        status,
+        message,
+        error.response?.data?.errors
+      )
+    );
+  }
+);
+
+export interface RequestOptions {
+  params?: Record<string, unknown>;
 }
 
 export const http = {
-  get: <T,>(path: string, options?: RequestOptions) => request<T>('GET', path, options),
-  post: <T,>(path: string, data?: unknown, options?: RequestOptions) =>
-  request<T>('POST', path, { ...options, data }),
-  patch: <T,>(path: string, data?: unknown, options?: RequestOptions) =>
-  request<T>('PATCH', path, { ...options, data }),
-  delete: <T,>(path: string, options?: RequestOptions) =>
-  request<T>('DELETE', path, options)
+  async get<T>(
+    path: string,
+    options?: RequestOptions
+  ): Promise<T> {
+    const response = await axiosClient.get<T>(path, options);
+    return response.data;
+  },
+
+  async post<T>(
+    path: string,
+    data?: unknown,
+    options?: RequestOptions
+  ): Promise<T> {
+    const response = await axiosClient.post<T>(
+      path,
+      data,
+      options
+    );
+    return response.data;
+  },
+
+  async patch<T>(
+    path: string,
+    data?: unknown,
+    options?: RequestOptions
+  ): Promise<T> {
+    const response = await axiosClient.patch<T>(
+      path,
+      data,
+      options
+    );
+    return response.data;
+  },
+
+  async delete<T>(
+    path: string,
+    options?: RequestOptions
+  ): Promise<T> {
+    const response = await axiosClient.delete<T>(
+      path,
+      options
+    );
+    return response.data;
+  },
 };
 
-export { ApiError };
-
 export function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  if (error instanceof Error) return error.message;
-  return 'Something went wrong. Please try again.';
+  if (error instanceof ApiError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Something went wrong. Please try again.";
 }

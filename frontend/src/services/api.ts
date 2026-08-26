@@ -87,6 +87,10 @@ export const api = {
     login: (data: {email: string;password: string;}) =>
     http.post<SessionResponse>('/api/auth/login', data),
     me: () => http.get<MeResponse>('/api/auth/me'),
+    logout: () =>
+    http.post<{ success: boolean; message: string }>(
+     '/api/auth/logout'
+    ),
     forgotPassword: (email: string) =>
     http.post<{message: string;resetToken: string | null;}>(
       '/api/auth/forgot-password',

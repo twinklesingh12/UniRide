@@ -5,8 +5,9 @@ import React, {
   useEffect,
   useMemo,
   useRef,
-  useState } from
-'react';
+  useState
+} from
+  'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { PublicUser, Role, VerificationStatus } from '../types';
@@ -20,7 +21,7 @@ type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 interface AuthContextValue {
   status: AuthStatus;
   user: PublicUser | null;
-  verification: {student: VerificationStatus;driver: VerificationStatus;};
+  verification: { student: VerificationStatus; driver: VerificationStatus; };
   studentApproved: boolean;
   driverApproved: boolean;
   login: (email: string, password: string, remember: boolean) => Promise<PublicUser>;
@@ -49,7 +50,7 @@ const emptyVerification = {
   driver: 'not_submitted' as VerificationStatus
 };
 
-export function AuthProvider({ children }: {children: React.ReactNode;}) {
+export function AuthProvider({ children }: { children: React.ReactNode; }) {
   const navigate = useNavigate();
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [session, setSession] = useState<MeResponse | null>(null);
@@ -89,12 +90,12 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
   /** Axios response-interceptor hook: any 401 ends the session immediately. */
   useEffect(
     () =>
-    onUnauthorized(() => {
-      if (loggingOut.current) return;
-      clearSession();
-      toast.error('Your session expired. Please sign in again.');
-      navigate('/login', { replace: true });
-    }),
+      onUnauthorized(() => {
+        if (loggingOut.current) return;
+        clearSession();
+        toast.error('Your session expired. Please sign in again.');
+        navigate('/login', { replace: true });
+      }),
     [clearSession, navigate]
   );
 
@@ -102,11 +103,16 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
     async (email: string, password: string, remember: boolean) => {
       const result = await api.auth.login({ email, password });
       tokenStore.set(result.token, remember);
+      const verification = result.verification ?? {
+        student: 'not_submitted',
+        driver: 'not_submitted'
+      };
+
       applySession({
         user: result.user,
-        verification: result.verification,
-        studentApproved: result.verification.student === 'approved',
-        driverApproved: result.verification.driver === 'approved'
+        verification,
+        studentApproved: verification.student === 'approved',
+        driverApproved: verification.driver === 'approved'
       });
       return result.user;
     },
@@ -130,12 +136,21 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
 
   const logout = useCallback(() => {
     loggingOut.current = true;
-    clearSession();
-    navigate('/login', { replace: true });
-    toast.success('You have been signed out.');
-    window.setTimeout(() => {
-      loggingOut.current = false;
-    }, 300);
+
+    void api.auth
+      .logout()
+      .catch(() => {
+        // Local logout must still complete if the server is unavailable.
+      })
+      .finally(() => {
+        clearSession();
+        navigate('/login', { replace: true });
+        toast.success('You have been signed out.');
+
+        window.setTimeout(() => {
+          loggingOut.current = false;
+        }, 300);
+      });
   }, [clearSession, navigate]);
 
   const value = useMemo<AuthContextValue>(
