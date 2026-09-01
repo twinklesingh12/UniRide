@@ -30,3 +30,6 @@ frontend/public_old/
 frontend/package-old.json
 frontend/index-old.html
 frontend/vite.config.old
+
+# Private uploaded verification documents
+backend/uploads/

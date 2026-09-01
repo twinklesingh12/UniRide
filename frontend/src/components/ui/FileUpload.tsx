@@ -38,11 +38,14 @@ export function FileUpload({
     }
     setError(null);
     onChange({
-      name: file.name,
-      type: file.type,
-      sizeMb: Number(sizeMb.toFixed(2)),
-      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined
-    });
+  name: file.name,
+  type: file.type,
+  sizeMb: Number(sizeMb.toFixed(2)),
+  previewUrl: file.type.startsWith('image/')
+    ? URL.createObjectURL(file)
+    : undefined,
+  file
+});
   }
 
   return (

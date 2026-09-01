@@ -27,7 +27,11 @@ export function DriverVerification() {
   const { refresh } = useAuth();
   const record = useAsync(() => api.drivers.verification(), []);
   const vehicles = useAsync(() => api.vehicles.list(), []);
-  const [form, setForm] = useState({ licence_number: '', gov_id_type: 'Aadhaar' });
+  const [form, setForm] = useState({
+  licence_number: '',
+  gov_id_type: 'Aadhaar',
+  gov_id_number: ''
+});
   const [licenceFile, setLicenceFile] = useState<UploadDescriptor | null>(null);
   const [govFile, setGovFile] = useState<UploadDescriptor | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -171,6 +175,24 @@ export function DriverVerification() {
                 <option>PAN Card</option>
               </Select>
             </Field>
+            <Field
+  label="Government ID number"
+  htmlFor="govIdNumber"
+  required
+>
+  <Input
+    id="govIdNumber"
+    value={form.gov_id_number}
+    onChange={(e) =>
+      setForm({
+        ...form,
+        gov_id_number: e.target.value
+      })
+    }
+    placeholder="Enter your government ID number"
+    required
+  />
+</Field>
             <FileUpload
               label="Driving licence"
               value={licenceFile}

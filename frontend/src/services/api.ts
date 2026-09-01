@@ -72,6 +72,7 @@ export interface UploadDescriptor {
   type: string;
   sizeMb: number;
   previewUrl?: string;
+  file?: File;
 }
 
 export const api = {
@@ -151,11 +152,40 @@ export const api = {
   drivers: {
     verification: () => http.get<DriverVerification>('/api/drivers/me/verification'),
     submit: (data: {
-      licence_number: string;
-      gov_id_type: string;
-      licence_file: UploadDescriptor;
-      gov_id_file: UploadDescriptor;
-    }) => http.post<DriverVerification>('/api/drivers/verify', data)
+  licence_number: string;
+  gov_id_type: string;
+  gov_id_number: string;
+  licence_file: UploadDescriptor;
+  gov_id_file: UploadDescriptor;
+}) => {
+  if (!data.licence_file.file || !data.gov_id_file.file) {
+    throw new Error('Both verification documents are required.');
+  }
+
+  const formData = new FormData();
+
+  formData.append('licence_number', data.licence_number);
+  formData.append('gov_id_type', data.gov_id_type);
+  formData.append(
+  'gov_id_number',
+  data.gov_id_number
+);
+
+  formData.append(
+    'licence_document',
+    data.licence_file.file
+  );
+
+  formData.append(
+    'government_id_document',
+    data.gov_id_file.file
+  );
+
+  return http.post<DriverVerification>(
+    '/api/drivers/verify',
+    formData
+  );
+}
   },
   vehicles: {
     list: () => http.get<Vehicle[]>('/api/vehicles'),
