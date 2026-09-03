@@ -4,11 +4,15 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import multer from "multer";
 import { testDatabaseConnection } from "./config/db.js";
+import adminRoutes from "./routes/adminRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import rideRoutes from "./routes/rideRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import driverRoutes from "./routes/driverRoutes.js";
+import vehicleRoutes from "./routes/vehicleRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
+import studentRoutes from "./routes/studentRoutes.js";
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -27,6 +31,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -41,11 +46,15 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+app.use("/api/admin", adminRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/rides", rideRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/drivers", driverRoutes);
+app.use("/api/vehicles", vehicleRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/students", studentRoutes);
 
 
 app.use((req, res) => {

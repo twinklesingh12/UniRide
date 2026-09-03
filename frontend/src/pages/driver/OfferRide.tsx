@@ -49,7 +49,20 @@ export function OfferRide() {
   async function publish(publishRide: boolean) {
     setWorking(true);
     try {
-      const ride = await api.rides.create({ ...form, publish: publishRide });
+      const sourceCoords = coordsFor(form.source);
+const destinationCoords = coordsFor(
+  form.destination
+);
+
+const ride = await api.rides.create({
+  ...form,
+  publish: publishRide,
+  source_coords: sourceCoords,
+  dest_coords: destinationCoords,
+  distance_km: route?.distanceKm ?? 0,
+  duration_min: route?.durationMin ?? 0,
+  route: route?.coordinates ?? []
+});
       toast.success(publishRide ? 'Ride published.' : 'Draft saved.');
       navigate(`/driver/rides/${ride.id}`);
     } catch (err) {

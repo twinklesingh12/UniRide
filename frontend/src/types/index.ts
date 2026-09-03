@@ -88,6 +88,7 @@ export interface Vehicle {
   driver_id: string;
   make: string;
   model: string;
+  manufacturing_year: number;
   number: string;
   color: string;
   seats: number;

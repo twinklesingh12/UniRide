@@ -1,7 +1,12 @@
 import express from "express";
 import {
+  createRide,
   getActiveRide,
+  getFareQuote,
+  getMyRides,
+  getRideById,
   searchRides,
+  updateRideStatus,
 } from "../controllers/rideController.js";
 import {
   authenticate,
@@ -15,11 +20,39 @@ router.get(
   authorizeRoles("passenger"),
   searchRides
 );
+router.post(
+  "/",
+  authenticate,
+  authorizeRoles("driver"),
+  createRide
+);
+router.get(
+  "/mine",
+  authenticate,
+  authorizeRoles("driver"),
+  getMyRides
+);
 router.get(
   "/active",
   authenticate,
-  authorizeRoles("passenger"),
+authorizeRoles("passenger", "driver"),
   getActiveRide
 );
-
+router.post(
+  "/:id/status",
+  authenticate,
+  authorizeRoles("driver"),
+  updateRideStatus
+);
+router.get(
+  "/:id",
+  authenticate,
+  getRideById
+);
+router.get(
+  "/:id/fare-quote",
+  authenticate,
+  authorizeRoles("passenger"),
+  getFareQuote
+);
 export default router;

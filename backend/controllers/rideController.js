@@ -23,7 +23,8 @@ export async function getActiveRide(req, res) {
           r.distance_km,
           r.estimated_duration_minutes,
           r.status,
-          r.started_at,
+r.ride_stage,
+r.started_at,
           r.created_at,
           r.updated_at,
 
@@ -53,13 +54,17 @@ export async function getActiveRide(req, res) {
        INNER JOIN users d ON d.id = r.driver_id
        LEFT JOIN vehicles v ON v.id = r.vehicle_id
 
-       WHERE b.passenger_id = ?
-         AND b.status = 'confirmed'
-         AND r.status = 'in_progress'
+       WHERE (
+    (? = 'driver' AND r.driver_id = ?)
+    OR
+    (? = 'passenger' AND b.passenger_id = ?)
+  )
+  AND b.status = 'confirmed'
+  AND r.status = 'in_progress'
 
-       ORDER BY r.started_at DESC
-       LIMIT 1`,
-      [req.user.id]
+ORDER BY r.started_at DESC
+LIMIT 1`,
+[req.user.role, req.user.id, req.user.role, req.user.id]
     );
 
     if (rows.length === 0) {
@@ -93,7 +98,7 @@ export async function getActiveRide(req, res) {
       distance_km: Number(row.distance_km || 0),
       duration_min: row.estimated_duration_minutes || 0,
       status: "active",
-      stage: "in_progress",
+      stage: row.ride_stage || "in_progress",
       driver_location: null,
       location_updated_at: null,
       notes: "",
@@ -326,6 +331,7 @@ export async function searchRides(req, res) {
           phone: row.driver_phone,
           role: "driver",
           status: "active",
+          verified: true,
           avatar_url: row.driver_avatar || "",
           rating: 0,
           total_trips: 0,
@@ -373,5 +379,849 @@ export async function searchRides(req, res) {
       success: false,
       message: "Unable to search for rides",
     });
+  }
+}
+export async function createRide(req, res) {
+  try {
+    const {
+      source,
+      destination,
+      source_coords,
+      dest_coords,
+      departure_date,
+      departure_time,
+      total_seats,
+      total_cost,
+      vehicle_id,
+      distance_km = 0,
+      duration_min = 0,
+      route = [],
+      notes = "",
+      publish = true,
+    } = req.body;
+
+    const seats = Number(total_seats);
+    const totalCost = Number(total_cost);
+
+    if (!source?.trim() || !destination?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Source and destination are required",
+      });
+    }
+
+    if (source.trim() === destination.trim()) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Source and destination must be different",
+      });
+    }
+
+    if (!departure_date || !departure_time) {
+      return res.status(400).json({
+        success: false,
+        message: "Departure date and time are required",
+      });
+    }
+
+    const departureDateTime = new Date(
+      `${departure_date}T${departure_time}:00`
+    );
+
+    if (
+      Number.isNaN(departureDateTime.getTime()) ||
+      departureDateTime <= new Date()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Departure date and time must be in the future",
+      });
+    }
+
+    if (
+      !Number.isInteger(seats) ||
+      seats < 1 ||
+      seats > 7
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Available seats must be between 1 and 7",
+      });
+    }
+
+    if (
+      !Number.isFinite(totalCost) ||
+      totalCost <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Estimated total cost must be greater than zero",
+      });
+    }
+
+    if (
+      !source_coords ||
+      !dest_coords ||
+      !Number.isFinite(Number(source_coords.lat)) ||
+      !Number.isFinite(Number(source_coords.lng)) ||
+      !Number.isFinite(Number(dest_coords.lat)) ||
+      !Number.isFinite(Number(dest_coords.lng))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid route coordinates are required",
+      });
+    }
+
+    const [vehicleRows] = await pool.execute(
+      `SELECT *
+       FROM vehicles
+       WHERE id = ?
+         AND driver_id = ?
+         AND is_active = TRUE
+       LIMIT 1`,
+      [vehicle_id, req.user.id]
+    );
+
+    const vehicle = vehicleRows[0];
+
+    if (!vehicle) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "The selected vehicle was not found",
+      });
+    }
+
+    if (seats > Number(vehicle.total_seats)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Available seats cannot exceed the vehicle capacity",
+      });
+    }
+
+    if (publish) {
+      const [verificationRows] =
+        await pool.execute(
+          `SELECT status
+           FROM driver_verifications
+           WHERE user_id = ?
+           LIMIT 1`,
+          [req.user.id]
+        );
+
+      if (
+        verificationRows[0]?.status !== "approved"
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Your driver verification must be approved before publishing rides",
+        });
+      }
+    }
+
+    const status = publish ? "scheduled" : "draft";
+
+    const mysqlDeparture = `${departure_date} ${departure_time}:00`;
+
+    const [result] = await pool.execute(
+      `INSERT INTO rides (
+          driver_id,
+          vehicle_id,
+          source_address,
+          source_latitude,
+          source_longitude,
+          destination_address,
+          destination_latitude,
+          destination_longitude,
+          departure_datetime,
+          total_seats,
+          available_seats,
+          estimated_total_cost,
+          distance_km,
+          estimated_duration_minutes,
+          route_geometry,
+          notes,
+          status
+       )
+       VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?
+       )`,
+      [
+        req.user.id,
+        vehicle.id,
+        source.trim(),
+        Number(source_coords.lat),
+        Number(source_coords.lng),
+        destination.trim(),
+        Number(dest_coords.lat),
+        Number(dest_coords.lng),
+        mysqlDeparture,
+        seats,
+        seats,
+        totalCost,
+        Number(distance_km) || 0,
+        Number(duration_min) || 0,
+        JSON.stringify(route),
+        notes.trim(),
+        status,
+      ]
+    );
+
+    return res.status(201).json({
+      id: String(result.insertId),
+      driver_id: String(req.user.id),
+      vehicle_id: String(vehicle.id),
+      source: source.trim(),
+      destination: destination.trim(),
+      source_coords,
+      dest_coords,
+      departure_date,
+      departure_time,
+      total_seats: seats,
+      available_seats: seats,
+      total_cost: totalCost,
+      distance_km: Number(distance_km) || 0,
+      duration_min: Number(duration_min) || 0,
+      status,
+      stage: "starting_soon",
+      driver_location: null,
+      location_updated_at: null,
+      notes: notes.trim(),
+      route,
+      driver: {
+        id: String(req.user.id),
+        full_name: req.user.full_name,
+        email: req.user.email,
+        phone: req.user.phone,
+        role: "driver",
+        status: req.user.account_status,
+        avatar_url: req.user.avatar_url || "",
+        rating: 0,
+        total_trips: 0,
+        created_at: req.user.created_at,
+        updated_at: req.user.updated_at,
+      },
+      vehicle: {
+        id: String(vehicle.id),
+        driver_id: String(vehicle.driver_id),
+        make: vehicle.make,
+        model: vehicle.model,
+        manufacturing_year: Number(
+          vehicle.manufacturing_year
+        ),
+        number: vehicle.registration_number,
+        color: vehicle.color,
+        seats: vehicle.total_seats,
+        registration_doc: "",
+        created_at: vehicle.created_at,
+      },
+    });
+  } catch (error) {
+    console.error("Create ride error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to create the ride",
+    });
+  }
+}
+export async function getRideById(req, res) {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT
+          r.*,
+
+          DATE_FORMAT(
+            r.departure_datetime,
+            '%Y-%m-%d'
+          ) AS departure_date,
+
+          TIME_FORMAT(
+            r.departure_datetime,
+            '%H:%i:%s'
+          ) AS departure_time,
+
+          d.full_name AS driver_name,
+          d.email AS driver_email,
+          d.phone AS driver_phone,
+          d.avatar_url AS driver_avatar,
+
+          dv.status AS verification_status,
+
+          v.make AS vehicle_make,
+          v.model AS vehicle_model,
+          v.manufacturing_year,
+          v.registration_number,
+          v.color AS vehicle_color,
+          v.total_seats AS vehicle_seats,
+
+          (
+            SELECT COALESCE(
+              SUM(b.seats_booked),
+              0
+            )
+            FROM bookings b
+            WHERE b.ride_id = r.id
+              AND b.status = 'confirmed'
+          ) AS confirmed_passengers
+
+       FROM rides r
+
+       INNER JOIN users d
+         ON d.id = r.driver_id
+
+       LEFT JOIN driver_verifications dv
+         ON dv.user_id = r.driver_id
+
+       LEFT JOIN vehicles v
+         ON v.id = r.vehicle_id
+
+       WHERE r.id = ?
+       LIMIT 1`,
+      [req.params.id]
+    );
+
+    const row = rows[0];
+
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        message: "Ride not found",
+      });
+    }
+
+    const isOwner =
+      Number(row.driver_id) === Number(req.user.id);
+
+    if (row.status === "draft" && !isOwner) {
+      return res.status(404).json({
+        success: false,
+        message: "Ride not found",
+      });
+    }
+
+    let route = [];
+
+    try {
+      route =
+        typeof row.route_geometry === "string"
+          ? JSON.parse(row.route_geometry)
+          : row.route_geometry || [];
+    } catch {
+      route = [];
+    }
+
+    const confirmedPassengers =
+      Number(row.confirmed_passengers) || 0;
+
+    const perSeatFare = Math.round(
+      Number(row.estimated_total_cost) /
+        Math.max(1, confirmedPassengers + 1)
+    );
+
+    const frontendStatus =
+      row.status === "in_progress"
+        ? "active"
+        : row.status;
+
+    return res.status(200).json({
+      id: String(row.id),
+      driver_id: String(row.driver_id),
+      vehicle_id: String(row.vehicle_id),
+      source: row.source_address,
+      destination: row.destination_address,
+
+      source_coords: {
+        lat: Number(row.source_latitude),
+        lng: Number(row.source_longitude),
+      },
+
+      dest_coords: {
+        lat: Number(row.destination_latitude),
+        lng: Number(row.destination_longitude),
+      },
+
+      departure_date: row.departure_date,
+      departure_time: row.departure_time,
+      total_seats: row.total_seats,
+      available_seats: row.available_seats,
+      total_cost: Number(row.estimated_total_cost),
+      distance_km: Number(row.distance_km || 0),
+
+      duration_min:
+        row.estimated_duration_minutes || 0,
+
+      status: frontendStatus,
+
+      stage:
+        row.status === "in_progress"
+          ? "in_progress"
+          : row.status === "completed"
+            ? "completed"
+            : "starting_soon",
+
+      driver_location: null,
+      location_updated_at: null,
+      notes: row.notes || "",
+      route,
+      confirmed_passengers: confirmedPassengers,
+      per_seat_fare: perSeatFare,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+
+      driver: {
+        id: String(row.driver_id),
+        full_name: row.driver_name,
+        email: row.driver_email,
+        phone: row.driver_phone,
+        role: "driver",
+        status: "active",
+        avatar_url: row.driver_avatar || "",
+        rating: 0,
+        total_trips: 0,
+
+        verified:
+          row.verification_status === "approved",
+
+        created_at: "",
+        updated_at: "",
+      },
+
+      vehicle: row.vehicle_id
+        ? {
+            id: String(row.vehicle_id),
+            driver_id: String(row.driver_id),
+            make: row.vehicle_make,
+            model: row.vehicle_model,
+
+            manufacturing_year: Number(
+              row.manufacturing_year
+            ),
+
+            number: row.registration_number,
+            color: row.vehicle_color,
+            seats: row.vehicle_seats,
+            registration_doc: "",
+            created_at: "",
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("Get ride details error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load ride details",
+    });
+  }
+}
+export async function getMyRides(req, res) {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT
+          r.*,
+
+          DATE_FORMAT(
+            r.departure_datetime,
+            '%Y-%m-%d'
+          ) AS departure_date,
+
+          TIME_FORMAT(
+            r.departure_datetime,
+            '%H:%i:%s'
+          ) AS departure_time,
+
+          v.make AS vehicle_make,
+          v.model AS vehicle_model,
+          v.manufacturing_year,
+          v.registration_number,
+          v.color AS vehicle_color,
+          v.total_seats AS vehicle_seats,
+
+          (
+            SELECT COALESCE(
+              SUM(b.seats_booked),
+              0
+            )
+            FROM bookings b
+            WHERE b.ride_id = r.id
+              AND b.status = 'confirmed'
+          ) AS confirmed_passengers
+
+       FROM rides r
+
+       LEFT JOIN vehicles v
+         ON v.id = r.vehicle_id
+
+       WHERE r.driver_id = ?
+
+       ORDER BY r.departure_datetime DESC`,
+      [req.user.id]
+    );
+
+    const rides = rows.map((row) => {
+      let route = [];
+
+      try {
+        route =
+          typeof row.route_geometry === "string"
+            ? JSON.parse(row.route_geometry)
+            : row.route_geometry || [];
+      } catch {
+        route = [];
+      }
+
+      const confirmedPassengers =
+        Number(row.confirmed_passengers) || 0;
+
+      const perSeatFare = Math.round(
+        Number(row.estimated_total_cost) /
+          Math.max(1, confirmedPassengers + 1)
+      );
+
+      return {
+        id: String(row.id),
+        driver_id: String(row.driver_id),
+        vehicle_id: String(row.vehicle_id),
+        source: row.source_address,
+        destination: row.destination_address,
+
+        source_coords: {
+          lat: Number(row.source_latitude),
+          lng: Number(row.source_longitude),
+        },
+
+        dest_coords: {
+          lat: Number(row.destination_latitude),
+          lng: Number(row.destination_longitude),
+        },
+
+        departure_date: row.departure_date,
+        departure_time: row.departure_time,
+        total_seats: row.total_seats,
+        available_seats: row.available_seats,
+        total_cost: Number(row.estimated_total_cost),
+        distance_km: Number(row.distance_km || 0),
+
+        duration_min:
+          row.estimated_duration_minutes || 0,
+
+        status:
+          row.status === "in_progress"
+            ? "active"
+            : row.status,
+
+        stage:
+          row.status === "in_progress"
+            ? "in_progress"
+            : row.status === "completed"
+              ? "completed"
+              : "starting_soon",
+
+        driver_location: null,
+        location_updated_at: null,
+        notes: row.notes || "",
+        route,
+        confirmed_passengers: confirmedPassengers,
+        per_seat_fare: perSeatFare,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+
+        driver: {
+          id: String(req.user.id),
+          full_name: req.user.full_name,
+          email: req.user.email,
+          phone: req.user.phone,
+          role: "driver",
+          status: req.user.account_status,
+          avatar_url: req.user.avatar_url || "",
+          rating: 0,
+          total_trips: 0,
+          verified: true,
+          created_at: req.user.created_at,
+          updated_at: req.user.updated_at,
+        },
+
+        vehicle: row.vehicle_id
+          ? {
+              id: String(row.vehicle_id),
+              driver_id: String(row.driver_id),
+              make: row.vehicle_make,
+              model: row.vehicle_model,
+
+              manufacturing_year: Number(
+                row.manufacturing_year
+              ),
+
+              number: row.registration_number,
+              color: row.vehicle_color,
+              seats: row.vehicle_seats,
+              registration_doc: "",
+              created_at: "",
+            }
+          : null,
+      };
+    });
+
+    return res.status(200).json(rides);
+  } catch (error) {
+    console.error("Get my rides error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load your rides",
+    });
+  }
+}
+export async function getFareQuote(req, res) {
+  try {
+    const requestedSeats = Number(
+      req.query.seats || 1
+    );
+
+    if (
+      !Number.isInteger(requestedSeats) ||
+      requestedSeats < 1
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid number of seats",
+      });
+    }
+
+    const [rideRows] = await pool.execute(
+      `SELECT
+          id,
+          estimated_total_cost,
+          available_seats,
+          status
+       FROM rides
+       WHERE id = ?
+       LIMIT 1`,
+      [req.params.id]
+    );
+
+    const ride = rideRows[0];
+
+    if (!ride) {
+      return res.status(404).json({
+        success: false,
+        message: "Ride not found",
+      });
+    }
+
+    if (ride.status !== "scheduled") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This ride is not currently available for booking",
+      });
+    }
+
+    if (
+      requestedSeats >
+      Number(ride.available_seats)
+    ) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "The requested number of seats is not available",
+      });
+    }
+
+    const [bookingRows] = await pool.execute(
+      `SELECT COUNT(*) AS total
+       FROM bookings
+       WHERE ride_id = ?
+         AND status = 'confirmed'`,
+      [req.params.id]
+    );
+
+    const confirmedBookings =
+      Number(bookingRows[0].total) || 0;
+
+    const passengerCount =
+      confirmedBookings + 1;
+
+    const totalRideCost = Number(
+      ride.estimated_total_cost
+    );
+
+    const perSeatFare = Math.round(
+      totalRideCost /
+        Math.max(1, passengerCount)
+    );
+
+    const baseFare =
+      perSeatFare * requestedSeats;
+
+    const [studentRows] = await pool.execute(
+      `SELECT status
+       FROM student_verifications
+       WHERE user_id = ?
+       LIMIT 1`,
+      [req.user.id]
+    );
+
+    const discountEligible =
+      studentRows[0]?.status === "approved";
+
+    const discount = discountEligible
+      ? Math.round(baseFare * 0.15)
+      : 0;
+
+    const finalFare = baseFare - discount;
+
+    return res.status(200).json({
+      totalCost: totalRideCost,
+      confirmedPassengers: passengerCount,
+      baseFare,
+      discount,
+      finalFare,
+      discountEligible,
+    });
+  } catch (error) {
+    console.error("Fare quote error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to calculate the fare",
+    });
+  }
+}
+export async function updateRideStatus(req, res) {
+  const connection = await pool.getConnection();
+
+  try {
+    const rideId = Number(req.params.id);
+    const driverId = req.user.id;
+    const { stage } = req.body;
+
+    const allowedStages = [
+      "driver_on_the_way",
+      "ride_started",
+      "in_progress",
+      "arriving",
+      "completed",
+    ];
+
+    if (!Number.isInteger(rideId) || rideId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ride ID",
+      });
+    }
+
+    if (!allowedStages.includes(stage)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ride status",
+      });
+    }
+
+    await connection.beginTransaction();
+
+    const [rows] = await connection.execute(
+      `SELECT id, driver_id, status
+       FROM rides
+       WHERE id = ?
+       FOR UPDATE`,
+      [rideId]
+    );
+
+    if (rows.length === 0) {
+      await connection.rollback();
+
+      return res.status(404).json({
+        success: false,
+        message: "Ride not found",
+      });
+    }
+
+    const ride = rows[0];
+
+    if (Number(ride.driver_id) !== Number(driverId)) {
+      await connection.rollback();
+
+      return res.status(403).json({
+        success: false,
+        message: "You cannot update this ride",
+      });
+    }
+    if (stage === "ride_started" && ride.status === "scheduled") {
+  const [bookingRows] = await connection.execute(
+    `SELECT COUNT(*) AS confirmed_count
+     FROM bookings
+     WHERE ride_id = ?
+       AND status = 'confirmed'`,
+    [rideId]
+  );
+
+  if (Number(bookingRows[0].confirmed_count) === 0) {
+    await connection.rollback();
+
+    return res.status(400).json({
+      success: false,
+      message:
+        "You cannot start this ride until at least one passenger booking is confirmed",
+    });
+  }
+}
+    if (["cancelled", "completed"].includes(ride.status)) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message: `This ride is already ${ride.status}`,
+      });
+    }
+
+    const newStatus =
+      stage === "completed" ? "completed" : "in_progress";
+
+    await connection.execute(
+  `UPDATE rides
+   SET status = ?,
+       ride_stage = ?
+   WHERE id = ?`,
+  [newStatus, stage, rideId]
+);
+
+    if (newStatus === "completed") {
+      await connection.execute(
+        `UPDATE bookings
+         SET status = 'completed'
+         WHERE ride_id = ?
+           AND status = 'confirmed'`,
+        [rideId]
+      );
+    }
+
+    await connection.commit();
+
+    return res.status(200).json({
+      id: rideId,
+      status: newStatus,
+      stage,
+    });
+  } catch (error) {
+    await connection.rollback();
+
+    console.error("Update ride status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update ride status",
+    });
+  } finally {
+    connection.release();
   }
 }

@@ -13,7 +13,12 @@ import { errorMessage } from '../../services/http';
 import { formatLongDay } from '../../utils/format';
 
 export function ProfilePage() {
-  const { user, verification, refresh } = useAuth();
+  const {
+  user,
+  verification,
+  refresh,
+  logout
+} = useAuth();
   const [profile, setProfile] = useState({
     full_name: user?.full_name ?? '',
     phone: user?.phone ?? ''
@@ -47,8 +52,17 @@ export function ProfilePage() {
     setSavingPassword(true);
     try {
       await api.users.changePassword(passwords);
-      toast.success('Password changed.');
-      setPasswords({ current_password: '', password: '', confirm_password: '' });
+      toast.success(
+  'Password changed. Please log in again.'
+);
+
+setPasswords({
+  current_password: '',
+  password: '',
+  confirm_password: ''
+});
+
+logout();
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {

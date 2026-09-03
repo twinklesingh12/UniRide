@@ -11,13 +11,16 @@ const SEVEN_DAYS_IN_MILLISECONDS = 7 * 24 * 60 * 60 * 1000;
 
 function publicUser(user) {
   return {
-    id: user.id,
+    id: String(user.id),
     full_name: user.full_name,
     email: user.email,
     phone: user.phone,
     role: user.role,
+    status: user.account_status,
     account_status: user.account_status,
-    avatar_url: user.avatar_url,
+    avatar_url: user.avatar_url || "",
+    rating: Number(user.rating || 0),
+    total_trips: Number(user.total_trips || 0),
     created_at: user.created_at,
     updated_at: user.updated_at,
   };
@@ -214,13 +217,16 @@ export async function login(req, res) {
 
     await saveRefreshToken(user.id, refreshToken, req);
     setRefreshCookie(res, refreshToken);
-
+    const verification = await getVerificationStatus(user.id);
     return res.status(200).json({
-      success: true,
-      message: "Login successful",
-      token: accessToken,
-      user: publicUser(user),
-    });
+  success: true,
+  message: "Login successful",
+  token: accessToken,
+  user: publicUser(user),
+  verification,
+  studentApproved: verification.student === "approved",
+  driverApproved: verification.driver === "approved",
+});
   } catch (error) {
     console.error("Login error:", error);
 

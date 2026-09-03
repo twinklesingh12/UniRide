@@ -142,13 +142,29 @@ export const api = {
     http.post<BookingWithRide>(`/api/bookings/${id}/decision`, { decision })
   },
   students: {
-    me: () => http.get<StudentVerification>('/api/students/me'),
-    submit: (data: {
-      college_name: string;
-      enrollment_no: string;
-      file: UploadDescriptor;
-    }) => http.post<StudentVerification>('/api/students/verify', data)
-  },
+  me: () =>
+    http.get<StudentVerification>('/api/students/me'),
+
+  submit: (data: {
+    college_name: string;
+    enrollment_no: string;
+    file: UploadDescriptor;
+  }) => {
+    const formData = new FormData();
+
+    formData.append('college_name', data.college_name);
+    formData.append('enrollment_no', data.enrollment_no);
+
+    if (data.file.file) {
+      formData.append('file', data.file.file);
+    }
+
+    return http.post<StudentVerification>(
+      '/api/students/verify',
+      formData
+    );
+  }
+},
   drivers: {
     verification: () => http.get<DriverVerification>('/api/drivers/me/verification'),
     submit: (data: {
@@ -189,7 +205,45 @@ export const api = {
   },
   vehicles: {
     list: () => http.get<Vehicle[]>('/api/vehicles'),
-    create: (data: Record<string, unknown>) => http.post<Vehicle>('/api/vehicles', data),
+    create: (data: {
+  make: string;
+  model: string;
+  manufacturing_year: string;
+  number: string;
+  color: string;
+  seats: string;
+  registration_file: UploadDescriptor | null;
+}) => {
+  if (!data.registration_file?.file) {
+    throw new Error(
+      'Vehicle registration document is required.'
+    );
+  }
+
+  const formData = new FormData();
+
+  formData.append('make', data.make);
+  formData.append('model', data.model);
+
+  formData.append(
+    'manufacturing_year',
+    data.manufacturing_year
+  );
+
+  formData.append('number', data.number);
+  formData.append('color', data.color);
+  formData.append('seats', data.seats);
+
+  formData.append(
+    'registration_document',
+    data.registration_file.file
+  );
+
+  return http.post<Vehicle>(
+    '/api/vehicles',
+    formData
+  );
+},
     update: (id: string, data: Record<string, unknown>) =>
     http.patch<Vehicle>(`/api/vehicles/${id}`, data),
     remove: (id: string) => http.delete<{ok: boolean;}>(`/api/vehicles/${id}`)
